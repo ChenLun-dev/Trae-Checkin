@@ -1,0 +1,20 @@
+{
+ "accounts": [
+    {
+      "name": "账号1",
+      "uid": "1234567890123456",
+      "deviceId": "",
+      "region": "CN",
+      "accessToken": "",
+      "refreshToken": "在这里填这个账号自己的 refreshToken"
+    },
+    {
+      "name": "朋友A",
+      "uid": "9876543210987654",
+      "deviceId": "",
+      "region": "CN",
+      "accessToken": "",
+      "refreshToken": "在这里填朋友A的 refreshToken（必须来自他自己的登录）"
+    }
+  ]
+}

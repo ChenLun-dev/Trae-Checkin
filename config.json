@@ -1,0 +1,22 @@
+{
+  "_说明": "一般不用改。只有要配置推送时才需要动 notify 下面那三项。完整字段说明见 README。",
+
+  "notify": {
+    "qywxToken": "",
+    "plusplusToken": "",
+    "webhook": ""
+  },
+
+  "reqSource": 2,
+  "claimTries": 3,
+  "cooldownMin": 30,
+  "gapMin": 8,
+  "gapMax": 20,
+  "refreshMarginH": 2,
+  "jitter": true,
+  "noProxy": true,
+  "log": true,
+  "deviceId": "",
+  "only": "",
+  "local": "auto"
+}
