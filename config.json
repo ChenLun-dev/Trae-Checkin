@@ -8,15 +8,13 @@
   },
 
   "reqSource": 2,
-  "claimTries": 3,
+  "claimTries": 1,
   "cooldownMin": 30,
-  "gapMin": 8,
-  "gapMax": 20,
+  "gapMin": 5,
+  "gapMax": 12,
   "refreshMarginH": 2,
   "jitter": true,
   "noProxy": true,
   "log": true,
-  "deviceId": "",
-  "only": "",
-  "local": "auto"
+  "only": ""
 }
