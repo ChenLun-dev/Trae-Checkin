@@ -201,6 +201,47 @@ LOG_DIR = os.path.join(HERE, "logs")
 
 STORAGE_KEY = "iCubeAuthInfo://icube.cloudide"
 DC_PREFIX = "iCubeAuthInfo://icube-dc:"
+
+# ── 设备号的合法形态 ──────────────────────────────────────────────
+# 长度**不是**判据，这是踩过坑之后的结论。
+#
+# 早期版本要求必须 16 位，结果有人 storage.json 里的 Aha 号是 **15 位**，
+# `01_get_device_id.py` 直接判定"里面没有设备号"，人以为是客户端没登录。
+# 把校验放宽成 15~16 位之后，那位登录、换 token、签到全部正常 —— 说明服务端
+# 认的是"客户端注册过的那串数字"，不是"必须 16 位"。16 位只是多数机器上的巧合。
+#
+# 真正要挡住的是 UUID / 32 位 hex（32 位 hex 恰好全为数字的概率约 10^-7），
+# 它们必然含字母，isdigit() 一步就挡住了。
+#
+# 上下界只作防呆用：12 位（比见过的真实号留足余量）、20 位（64 位无符号整数的
+# 十进制上限）。
+DEVICE_ID_MIN_LEN = 12
+DEVICE_ID_MAX_LEN = 20
+
+
+def is_valid_device_id(d):
+    """设备号是否像客户端注册过的那串十进制数字。"""
+    d = str(d or "").strip()
+    return d.isdigit() and DEVICE_ID_MIN_LEN <= len(d) <= DEVICE_ID_MAX_LEN
+
+
+def device_id_from_key(key, value=None):
+    """从一个 storage.json 的键（值）里解析设备号，取不到返回 ""。
+
+    正常情况下号在**键名**冒号后面：
+        "iCubeAuthInfo://icube-dc:3124143766407755": {...}
+    但为稳妥，也认"键名就是 `iCubeAuthInfo://icube-dc`、号写在值里"的写法。
+    """
+    k = str(key or "")
+    if k.startswith(DC_PREFIX):
+        cand = k[len(DC_PREFIX):].strip()
+        return cand if is_valid_device_id(cand) else ""
+    if k.rstrip(":") == DC_PREFIX.rstrip(":") and value is not None:
+        cand = str(value).strip()
+        return cand if is_valid_device_id(cand) else ""
+    return ""
+
+
 HEADER_AES = bytes([0x74, 0x63, 0x05, 0x10, 0x00, 0x00])
 HEADER_AES_PRIVATE = bytes([18, 57, 32, 32, 2, 3])
 SALT_A = bytes([82, 9, 106, 213, 48, 54, 165, 56, 191, 64, 163, 158, 129, 243, 215, 251,
@@ -472,8 +513,10 @@ def find_storage_files():
 def device_ids_in(path):
     """从某个 storage.json 里取出真实设备号。
 
-    设备号就写在**键名**里（`iCubeAuthInfo://icube-dc:1234567890123456`），
+    设备号写在**键名**里（`iCubeAuthInfo://icube-dc:1234567890123456`），
     不需要解密那个值 —— 所以这里是纯读 JSON，不联网、不碰任何 token。
+
+    注意长度不限于 16 位，见 `is_valid_device_id`。
     """
     out = []
     try:
@@ -483,16 +526,15 @@ def device_ids_in(path):
         return out
     if not isinstance(storage, dict):
         return out
-    for k in storage:
-        if k.startswith(DC_PREFIX):
-            d = str(k[len(DC_PREFIX):]).strip()
-            if d.isdigit() and len(d) == 16 and d not in out:
-                out.append(d)
+    for k, v in storage.items():
+        d = device_id_from_key(k, v)
+        if d and d not in out:
+            out.append(d)
     return out
 
 
 def real_device_ids():
-    """本机所有 Trae 客户端注册的真实 16 位 Aha 设备号（去重）。"""
+    """本机所有 Trae 客户端注册的真实 Aha 设备号（去重）。"""
     out = []
     for p in find_storage_files():
         for d in device_ids_in(p):
@@ -501,20 +543,14 @@ def real_device_ids():
     return out
 
 
-def is_valid_device_id(d):
-    """设备号唯一合法的形态：16 位纯十进制数字。"""
-    d = str(d or "").strip()
-    return d.isdigit() and len(d) == 16
-
-
 def resolve_device_id(acc):
     """返回 (设备号, 说明)；取不到可用设备号时返回 (None, 原因)。
 
     设备号必须是 Trae 客户端**真实注册的** Aha 号（storage.json 里
-    `iCubeAuthInfo://icube-dc:<16位数字>`）。同账号同时刻的对照实测：
+    `iCubeAuthInfo://icube-dc:<一串十进制数字>`）。同账号同时刻的对照实测：
 
-        自动生成的 16 位数字 → claim 9074
-        客户端真实 Aha 号    → claim 9095（通过设备检查）
+        自动生成的一串数字 → claim 9074
+        客户端真实 Aha 号  → claim 9095（通过设备检查）
 
     所以这里**不再自动生成** —— 生成出来也必然被风控拒，不如直接报错，
     让人去用 `01_get_device_id.py` 取一个真号，而不是签到失败后才发现。
@@ -529,7 +565,7 @@ def resolve_device_id(acc):
     if real:
         return real[0], "客户端真实号"
     if manual:
-        return None, "配置的设备号 %s 不是 16 位纯数字" % manual[:32]
+        return None, "配置的设备号 %s 不像客户端设备号（应为十进制数字）" % manual[:32]
     return None, "没有配置设备号"
 
 
@@ -795,12 +831,20 @@ def load_accounts():
 
 # ══════════════════ OAuth 登录（独立会话链） ══════════════════
 def gen_device_id():
-    """16 位纯十进制数字设备号。
+    """自动生成一个 16 位十进制数字设备号（仅用于"没指定 --device-id"时的占位）。
 
-    NAS 上没有 Trae 客户端、也就没有真实 Aha 号，只能自己编一个 —— 这没问题，
-    服务端校验的是"16 位纯数字"这个格式，不是这个号它认不认得
-    （trae-signin-gui 全程随机生成、从不读 storage.json，9074 照样消失）。
-    但**绝不能是 UUID / 32 位 hex**，且生成后**固定不变，永不轮换**。
+    生成出来的号**注定被风控拒成 9074**。本项目的对照实测（同账号同时刻，
+    只改设备号这一个变量）：
+
+        自动生成的号 → did_checked_in=false → claim 9074
+        客户端真实号 → did_checked_in=true  → claim 9095
+
+    所以这个函数只在用户没传 --device-id 时兜底，并配合调用处那段醒目警告。
+    真要签到，必须用 `01_get_device_id.py` 去取客户端真实注册的那个号。
+
+    长度不影响合法性：实测有人的真实号是 **15 位**，照常登录、换 token、签到。
+    这里生成 16 位，只是因为多数机器上的真实号恰好是 16 位（见
+    `is_valid_device_id`）。
     """
     return str(secrets.randbelow(9 * 10 ** 15) + 10 ** 15)
 
@@ -971,7 +1015,7 @@ def cmd_login(argv):
     print()
 
     # 设备号必须用客户端真实 Aha 号。实测（2026-09-27，同账号同时刻对照）：
-    #   自动生成的 16 位号 → did_checked_in=false → claim 9074
+    #   自动生成的号（16 位）→ did_checked_in=false → claim 9074
     #   客户端真实 Aha 号   → did_checked_in=true  → claim 9095
     # 说明 OAuth 登录**不会**把设备号注册成可信设备，生成的号注定被风控拒。
     low = [a.lower() for a in argv]
@@ -981,10 +1025,10 @@ def cmd_login(argv):
         if i + 1 < len(argv):
             dev_arg = argv[i + 1].strip()
         else:
-            print("❌ --device-id 后面要跟 16 位数字")
+            print("❌ --device-id 后面要跟设备号（一串十进制数字）")
             return 1
     if dev_arg and not is_valid_device_id(dev_arg):
-        print("❌ --device-id 必须是 16 位纯数字，收到：%s" % dev_arg)
+        print("❌ --device-id 不像客户端设备号（应为一串十进制数字），收到：%s" % dev_arg)
         return 1
 
     if dev_arg:
@@ -994,7 +1038,7 @@ def cmd_login(argv):
         print("⚠️  没有用 --device-id 指定设备号，将自动生成一个。")
         print("    注意：生成的号会被服务端风控拒成 9074（实测确认），签到必然失败。")
         print("    要用这条会话签到，请传客户端真实 Aha 号：")
-        print("      python 02_login.py --device-id <16位数字>")
+        print("      python 02_login.py --device-id <设备号>")
         print("    （真实号取法：在装了 Trae 客户端的机器上跑 01_get_device_id.py）")
         print()
     machine_id = gen_machine_id()
@@ -1298,8 +1342,8 @@ def run_account(acc, state):
             # 所以不能想当然地当成"已签到"。两个可能都要考虑。
             print("💡 [提示] 9074 已定位到设备号（实测对照确认）：")
             print("         x-device-id 必须是 Trae 客户端**真实注册的 Aha 号**")
-            print("         （storage.json 里 `iCubeAuthInfo://icube-dc:<16位数字>`）。")
-            print("         自动生成的 16 位数字会被风控直接拒成 9074 —— 同一账号")
+            print("         （storage.json 里 `iCubeAuthInfo://icube-dc:<数字>`）。")
+            print("         自动生成的号会被风控直接拒成 9074 —— 同一账号")
             print("         换成真实号后立刻变成 9095，可见问题只在设备号。")
             print("         注意：签到限额按**设备**算，一个设备一天只能签一次。")
             return res

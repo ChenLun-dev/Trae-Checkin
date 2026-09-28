@@ -6,8 +6,10 @@
 【在哪跑】必须在一台**装了 Trae 客户端的机器**上跑。
 
 【干什么】读取客户端本地的 storage.json，把里面注册的真实设备号打印出来。
-签到用的 x-device-id 必须是这个号 —— 自动生成的 16 位数字会被服务端风控
-直接拒成 9074（同一账号同时刻的对照实测：生成号 → 9074，真实号 → 9095）。
+签到用的 x-device-id 必须是这个号 —— 自动生成的号会被服务端风控直接拒成
+9074（同一账号同时刻的对照实测：生成号 → 9074，真实号 → 9095）。
+
+设备号位数不固定：多数机器是 16 位，但也有 15 位的，都能正常用。
 
 【安全】纯读本地文件：**不联网、不解密、不碰任何 token**。
 
@@ -44,6 +46,37 @@ except Exception:
     pass
 
 DC_PREFIX = "iCubeAuthInfo://icube-dc:"
+
+# ⚠️ 下面这段必须和 trae_core.py 里的同名实现保持一致（本文件是独立单文件，
+#    不 import 那个模块，所以只能各存一份）。
+#
+# 长度**不是**判据。早期版本要求必须 16 位，结果有人 storage.json 里的 Aha 号
+# 是 15 位，本脚本直接报"里面没有设备号"，人以为客户端没登录。放宽后那位登录、
+# 换 token、签到全部正常 —— 服务端认的是"客户端注册过的那串数字"，不是位数。
+DEVICE_ID_MIN_LEN = 12
+DEVICE_ID_MAX_LEN = 20
+
+
+def is_valid_device_id(d):
+    """设备号是否像客户端注册过的那串十进制数字（长度不限于 16 位）。"""
+    d = str(d or "").strip()
+    return d.isdigit() and DEVICE_ID_MIN_LEN <= len(d) <= DEVICE_ID_MAX_LEN
+
+
+def device_id_from_key(key, value=None):
+    """从 storage.json 的键（值）里解析设备号，取不到返回 ""。
+
+    正常情况号在**键名**冒号后面；也认"键名就是 `iCubeAuthInfo://icube-dc`、
+    号写在值里"的写法。
+    """
+    k = str(key or "")
+    if k.startswith(DC_PREFIX):
+        cand = k[len(DC_PREFIX):].strip()
+        return cand if is_valid_device_id(cand) else ""
+    if k.rstrip(":") == DC_PREFIX.rstrip(":") and value is not None:
+        cand = str(value).strip()
+        return cand if is_valid_device_id(cand) else ""
+    return ""
 
 
 def base_dirs():
@@ -92,13 +125,12 @@ def read_storage(path):
 
 
 def device_ids_in(storage):
-    """设备号写在**键名**里，不需要解密那个值。"""
+    """设备号写在**键名**里，不需要解密那个值。长度不限 16 位。"""
     out = []
-    for k in storage:
-        if k.startswith(DC_PREFIX):
-            d = str(k[len(DC_PREFIX):]).strip()
-            if d.isdigit() and len(d) == 16 and d not in out:
-                out.append(d)
+    for k, v in storage.items():
+        d = device_id_from_key(k, v)
+        if d and d not in out:
+            out.append(d)
     return out
 
 

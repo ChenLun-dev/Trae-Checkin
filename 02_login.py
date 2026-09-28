@@ -19,9 +19,11 @@ Trae 桌面客户端**的 refreshToken 会话链，写进 accounts.json。
 ────────────────────────────────────────────────────────────
   签到用的 x-device-id 必须是 Trae 客户端**真实注册的 Aha 号**。
   同账号同时刻的对照实测：
-      自动生成的 16 位号 → claim 9074
-      客户端真实 Aha 号   → claim 9095（通过设备检查）
+      自动生成的号      → claim 9074
+      客户端真实 Aha 号 → claim 9095（通过设备检查）
   OAuth 登录**不会**把设备号注册成可信设备，所以生成的号注定失败。
+
+  位数不固定：多数机器是 16 位，也有 15 位的，都能正常用。
 
   真实号取法：在装了 Trae 客户端的机器上跑 01_get_device_id.py。
 
@@ -89,7 +91,7 @@ def import_accounts(path):
         # 非法值就地清空，让人去 01_get_device_id.py 补，而不是编一个假的。
         if a.get("deviceId") and not T.is_valid_device_id(a.get("deviceId")):
             print("   🔧 %s 的设备号格式非法（%s…），已清空"
-                  % (a.get("name") or uid, str(a["deviceId"])[:16]))
+                  % (a.get("name") or uid, str(a["deviceId"])[:20]))
             a["deviceId"] = ""
         if not a.get("deviceId"):
             print("   ⚠️ %s 还没有设备号 —— 请在对方装了 Trae 的机器上跑"
