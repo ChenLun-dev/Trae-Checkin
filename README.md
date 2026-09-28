@@ -61,6 +61,8 @@ trae-checkin/
 ├── config.json             设置，一般不用改
 ├── accounts.example.json   账号模板
 ├── accounts.json           账号（登录后生成，手动补 deviceId）
+├── .github/workflows/
+│   └── checkin.yml         GitHub Actions 定时签到（可选，见下文）
 └── logs/                   运行日志，自动生成
 ```
 
@@ -115,6 +117,88 @@ python 03_checkin.py
 ```cron
 23 3 * * *    python3 /ql/data/scripts/trae/03_checkin.py
 ```
+
+---
+
+## 部署到 GitHub Actions
+
+不用自备服务器、不用装 Python，GitHub 免费给你跑。
+
+### 先理解一件事：状态必须跨次保留
+
+`refreshToken` 是**轮换链**——每次续期都会产生新值，旧值随即作废。而 Actions 的工作目录是**一次性的**，跑完就丢。所以续期后的新 token 必须存到仓库外面，否则**第二次运行就会拿一份已经作废的 token 去登录，必然失败**。
+
+本仓库的做法是用 Actions 自带的缓存（`actions/cache`）保留 `.trae_token_cache.json`。脚本里的 `apply_cache()` 会拿缓存中较新的 token 覆盖静态配置——这个机制本来就是为"配置写死、不会变"的场景准备的（青龙的环境变量同理）。
+
+> **不要为了"持久化"把 `accounts.json` 提交进仓库。** 那等于公开你的 refreshToken。脚本也不需要它 —— 账号从 `TRAE_ACCOUNTS` 读，续期结果落在缓存里。
+
+### 操作步骤
+
+**1. 把仓库 Fork 到你自己的账号下**（或者直接用你自己的仓库）。
+
+**2. 加 Secret。** `Settings` → `Secrets and variables` → `Actions` → `New repository secret`：
+
+| Name | Value |
+|---|---|
+| `TRAE_ACCOUNTS` | `accounts.json` 里 `accounts` 数组那一整段 JSON |
+
+要推送到手机就再加（都选填，含义见[设置放哪](#设置放哪)）：
+
+| Name | 对应 |
+|---|---|
+| `QYWX_TOKEN` | 企业微信机器人 key |
+| `PLUSPLUS_TOKEN` | PushPlus token |
+| `TRAE_WEBHOOK` | 自定义 webhook 地址 |
+
+**3. 启用工作流。** `Actions` 标签页 → 左侧选 `Trae 每日签到` → 点 `Enable workflow`。
+
+**4. 手动跑一次验证。** `Run workflow` → 看日志输出。
+
+**5. 之后每天自动跑。** 想改时间就编辑 `.github/workflows/checkin.yml`。
+
+### cron 写的是 UTC，不是北京时间
+
+**这点和青龙不一样**（青龙跟随容器时区）。GitHub 的 `schedule` 一律按 UTC，北京 = UTC+8，所以要**减 8 小时**：
+
+| 想在北京时间 | cron 写 |
+|---|---|
+| 00:23 | `23 16 * * *` |
+| 03:23 | `23 19 * * *` |
+
+仓库自带的配置是 `23 16 * * *`（= 北京时间 00:23）。
+
+另外两个 Actions 特有的行为要知道：
+
+- 定时任务在高峰期**可能延迟几分钟到十几分钟**才真正触发，不保证准点
+- 公开仓库的 Actions **完全免费**；私有仓库每月有免费额度（个人账号 2000 分钟），这个任务一次一两分钟、一天一次，一个月约 60 分钟，够用
+
+### 这个方式的三个限制
+
+1. **设备号还是得自己取。** Actions 跑在 GitHub 的机器上，那台机器没装 Trae，`01_get_device_id.py` 用不上。设备号必须先在你自己电脑上取好，填进 `TRAE_ACCOUNTS` 里对应账号的 `deviceId`。
+2. **多账号需要多个真实设备号。** 一个设备号一天只能签一个账号，这个限制不会因为换到 Actions 就消失。有几个账号就要有几个来自不同机器的真实号，配齐了照样能跑；只有一个号的话，也只能签一个账号。
+3. **缓存丢了就会失败。** Actions 缓存 7 天没人访问会被清掉。如果工作流连着超过一周没有成功运行，恢复不到缓存就会退回 `TRAE_ACCOUNTS` 里那份旧 token，需要重新 `02_login.py` 登录一次并更新 Secret。
+
+> 附带的一个好处：失败时 GitHub 会给你发邮件。
+
+### 工作流文件长什么样
+
+完整内容在 `.github/workflows/checkin.yml`。有一段是**关键**，不能省：
+
+```yaml
+      # refreshToken 每次续期都会产生新值、旧值作废，而 Actions 的工作目录
+      # 是一次性的。所以必须把续期后的 token 用缓存带到下一次运行。
+      - name: 恢复 token 缓存
+        uses: actions/cache@v5
+        with:
+          path: .trae_token_cache.json
+          key: trae-token-${{ github.run_id }}
+          restore-keys: |
+            trae-token-
+```
+
+`key` 里带 `run_id` 是为了保证每次都写入一份新缓存（同名缓存不可覆盖），`restore-keys` 负责在下次运行时取回最近的那一份。
+
+**这段删掉的后果**：第一次运行正常，但 token 已经续期并轮换；第二次运行拿到的还是旧的 `TRAE_ACCOUNTS`，那份 refreshToken 已经作废，直接失败。
 
 ---
 
