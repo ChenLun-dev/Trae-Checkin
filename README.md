@@ -116,7 +116,14 @@ python 02_login.py --device-id 1234567890123456
 python 03_checkin.py
 ```
 
-青龙定时建议（避开整点，实测 00:15~00:45 最好签）：
+如果希望程序自己常驻、每隔 **24 小时** 自动执行一次：
+```bash
+python 03_checkin.py --24h
+```
+
+24 小时模式以程序启动时间为基准，每 24×60×60 秒执行一轮；程序会一直运行，按 `Ctrl+C` 可停止。
+
+青龙定时建议（如果使用青龙，就继续由青龙负责每天启动一次；不需要同时使用 `--24h`）：
 
 ```cron
 23 3 * * *    python3 /ql/data/scripts/trae/03_checkin.py
@@ -233,7 +240,8 @@ python 02_login.py --import FILE                  # 合并别人的 accounts.jso
 ### `03_checkin.py` — 签到
 
 ```bash
-python 03_checkin.py
+python 03_checkin.py          # 单次签到
+python 03_checkin.py --24h   # 常驻，每 24 小时签到一次
 ```
 
 行为：
